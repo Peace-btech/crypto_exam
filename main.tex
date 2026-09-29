@@ -1,0 +1,443 @@
+\documentclass[12pt,a4paper]{article}
+\usepackage[utf8]{inputenc}
+\usepackage[margin=1in]{geometry}
+\usepackage{hyperref}
+\usepackage{listings}
+\usepackage{xcolor}
+\usepackage{booktabs}
+\usepackage{array}
+
+% Code snippet styling
+\definecolor{codegray}{rgb}{0.95,0.95,0.95}
+\definecolor{codegreen}{rgb}{0,0.6,0}
+\definecolor{codeblue}{rgb}{0,0.2,0.8}
+
+\lstdefinestyle{mystyle}{
+    backgroundcolor=\color{codegray},   
+    commentstyle=\color{codegreen},
+    keywordstyle=\color{codeblue},
+    basicstyle=\ttfamily\small,
+    breaklines=true,
+    captionpos=b,
+    keepspaces=true,
+    numbers=left,
+    numbersep=5pt,
+    showspaces=false,
+    showstringspaces=false,
+    showtabs=false,
+    tabsize=2
+}
+\lstset{style=mystyle}
+
+\title{\textbf{TECHNICAL REPORT: INTEGRATED SECURITY ASSESSMENT, PYTHON TOOLKIT, AND FIREWALL CONFIGURATION}\\
+\large Module: ETTCS801 Cryptography and Network Security}
+\author{\textbf{Peace MUNYANEZA}\\ULK Polytechnic Institute}
+\date{\today}
+
+\begin{document}
+
+\maketitle
+
+\begin{abstract}
+This technical report documents the implementation of security measures for a polytechnic institute's central server and campus network. It covers a comprehensive risk assessment, a custom Python cryptography and file integrity toolkit, iptables network traffic filtering, verification test cases, and repository deployment instructions.
+\end{abstract}
+
+\tableofcontents
+\newpage
+
+\section{Introduction}
+A recent security review identified multiple vulnerabilities across the institution's network, including unencrypted student record file transfers, weak staff passwords, outdated software, and unencrypted guest network access to the primary records server. Additionally, repetitive unauthorized external access attempts were observed. This project implements risk mitigation controls, an automated file encryption and integrity checking toolkit in Python, and explicit network access control lists using Linux firewall utilities.
+
+\section{Risk Assessment}
+
+\subsection{Assets, Vulnerabilities, and Consequences}
+\begin{description}
+    \item[Asset 1: Student Records Database/Server] \hfill \\
+    \textit{Vulnerabilities:} Unencrypted file transfers over the local network and guest network routing directly to the server. \\
+    \textit{Consequences:} Interception of sensitive personally identifiable information (PII) via packet sniffing, potential exposure of grade records, and breach of compliance regulations.
+    
+    \item[Asset 2: Staff User Credentials and Authentication Session] \hfill \\
+    \textit{Vulnerabilities:} Weak password policy and outdated software/services. \\
+    \textit{Consequences:} Credential stuffing, brute-force attacks, system compromise, and unauthorized administrative privilege escalation.
+    
+    \item[Asset 3: Internal Network Infrastructure] \hfill \\
+    \textit{Vulnerabilities:} Unrestricted routing between the guest segment and administrative servers, along with unmonitored inbound external traffic. \\
+    \textit{Consequences:} Denial of Service (DoS) attacks, unauthorized network pivoting, and external exploit execution.
+\end{description}
+
+\subsection{Risk Rankings and Justification}
+\begin{table}[h!]
+\centering
+\begin{tabular}{l l l p{6cm}}
+\toprule
+\textbf{Risk} & \textbf{Likelihood} & \textbf{Impact} & \textbf{Justification} \\
+\midrule
+1. Interception of Unencrypted Data & High & High & Active network exposure via unencrypted file transfers and open guest routing makes data capture trivially reproducible. \\
+2. Unauthorized Access via Weak Passwords & High & Medium & Passive brute-force attempts from external IPs combined with weak credential rules present a high probability of compromise. \\
+3. External Unsolicited Server Traffic & Medium & High & Exposure to malicious external addresses can lead to system vulnerabilities being exploited. \\
+\bottomrule
+\end{tabular}
+\caption{Risk Assessment Matrix}
+\end{table}
+
+\subsection{Recommended Controls}
+\begin{itemize}
+    \item \textbf{Control 1 (Encryption \& Integrity Verification):} Deploy AES-256 Symmetric Encryption (CBC mode with PKCS7 padding) for storing and transferring files, combined with SHA-256 cryptographic hashing to ensure data integrity.
+    \item \textbf{Control 2 (Network Segmentation \& Filtering):} Implement strict stateful firewall rules (\texttt{iptables}) separating guest traffic from internal administrative zones, blocking all unauthorized subnet requests.
+    \item \textbf{Control 3 (Access Control \& Key Management):} Enforce strong password complexity policies, update host software packages, and store system decryption keys outside root code repositories using environment-level key isolation.
+\end{itemize}
+
+\section{Encryption and Integrity Application}
+
+\subsection{Implementation Overview}
+A custom Python script using the \texttt{cryptography} library (\texttt{Fernet}/AES-CBC) and \texttt{hashlib} was written to manage security functions. The application reads local file binaries, generates cryptographic signatures using SHA-256, encrypts payloads, and handles file exceptions safely.
+
+\subsection{Core Cryptographic Implementation}
+\begin{lstlisting}[language=Python, caption=Python Security Application Excerpt]
+import os
+import hashlib
+from cryptography.fernet import Fernet
+
+def generate_and_save_key(key_path="secret.key"):
+    key = Fernet.generate_key()
+    with open(key_path, "wb") as key_file:
+        key_file.write(key)
+
+def load_key(key_path="secret.key"):
+    if not os.path.exists(key_path):
+        raise FileNotFoundError("Encryption key missing!")
+    return open(key_path, "rb").read()
+
+def encrypt_file(file_path, key):
+    f = Fernet(key)
+    with open(file_path, "rb") as file:
+        file_data = file.read()
+    encrypted_data = f.encrypt(file_data)
+    with open(file_path + ".enc", "wb") as file:
+        file.write(encrypted_data)
+
+def decrypt_file(enc_path, key):
+    f = Fernet(key)
+    with open(enc_path, "rb") as file:
+        encrypted_data = file.read()
+    decrypted_data = f.decrypt(encrypted_data)
+    out_path = enc_path.replace(".enc", ".dec")
+    with open(out_path, "wb") as file:
+        file.write(decrypted_data)
+
+def calculate_sha256(file_path):
+    sha256_hash = hashlib.sha256()
+    try:
+        with open(file_path, "rb") as f:
+            for byte_block in iter(lambda: f.read(4096), b""):
+                sha256_hash.update(byte_block)
+        return sha256_hash.hexdigest()
+    except FileNotFoundError:
+        print(f"Error: File '{file_path}' not found.")
+        return None
+\end{lstlisting}
+
+\subsection{Verification Procedures}
+\begin{enumerate}
+    \item \textbf{Encryption Testing:} The plain text student records file (\texttt{student\_records.txt}) was encrypted into \texttt{student\_records.txt.enc}. Verification confirmed that the original cleartext was obfuscated.
+    \item \textbf{Decryption Testing:} Decryption resulted in \texttt{student\_records.txt.dec}. A \texttt{diff} check confirmed that the decrypted payload was identical to the input file.
+    \item \textbf{Integrity Verification:} SHA-256 hashes generated before and after file modification demonstrated clear signature drift, correctly alerting the application to payload tampering.
+    \item \textbf{Error Handling:} Validated that attempting to open non-existent paths or passing corrupted decryption keys yielded controlled error warnings rather than crash dumps.
+\end{enumerate}
+
+\section{Network Traffic Filtering}
+
+\subsection{Firewall Rule Definitions}
+Traffic filtering was implemented using \texttt{iptables} rules configured on the central Linux record server.
+
+\begin{lstlisting}[language=bash, caption=iptables Network Rule Configuration]
+# Flush pre-existing chain rules
+sudo iptables -F
+sudo iptables -X
+
+# Set default policy to drop inbound traffic
+sudo iptables -P INPUT DROP
+sudo iptables -P FORWARD DROP
+sudo iptables -P OUTPUT ACCEPT
+
+# Allow loopback operations
+sudo iptables -A INPUT -i lo -j ACCEPT
+sudo iptables -A INPUT -m state --state ESTABLISHED,RELATED -j ACCEPT
+
+# Block Guest Subnet Access (192.168.100.0/24) to Records Server
+sudo iptables -A INPUT -s 192.168.100.0/24 -d 10.0.0.5 -j DROP
+
+# Permit Authorized Staff Subnet (10.0.10.0/24) Access to HTTP/HTTPS Service
+sudo iptables -A INPUT -p tcp -s 10.0.10.0/24 --dport 443 -j ACCEPT
+sudo iptables -A INPUT -p tcp -s 10.0.10.0/24 --dport 80 -j ACCEPT
+
+# Drop all other unauthorized inbound traffic on destination port 443/80
+sudo iptables -A INPUT -p tcp --dport 443 -j DROP
+sudo iptables -A INPUT -p tcp --dport 80 -j DROP
+\end{lstlisting}
+
+\subsection{Filter Verification Test Execution}
+Verification scenarios were evaluated using netcat (\texttt{nc}) connectivity probes.
+
+\begin{table}[h!]
+\centering
+\begin{tabular}{p{3.5cm} p{4.5cm} p{3.5cm} p{3.5cm}}
+\toprule
+\textbf{Test Connection} & \textbf{Command Executed} & \textbf{Expected Outcome} & \textbf{Actual Result} \\
+\midrule
+1. Staff Subnet Access (Permitted) & \texttt{nc -zv -w 3 10.0.0.5 443} (from 10.0.10.15) & Connection Succeeded & Connected to 10.0.0.5 port 443 [tcp/https] open \\
+2. Guest Subnet Access (Blocked) & \texttt{nc -zv -w 3 10.0.0.5 443} (from 192.168.100.22) & Connection Timed Out / Dropped & nc: connect to 10.0.0.5 port 443 (tcp) timed out \\
+3. Unfamiliar External Host (Blocked) & \texttt{nc -zv -w 3 10.0.0.5 443} (from 203.0.113.50) & Connection Timed Out / Dropped & nc: connect to 10.0.0.5 port 443 (tcp) timed out \\
+\bottomrule
+\end{tabular}
+\caption{Firewall Filter Verification Results}
+\end{table}
+
+\section{Project Evidence and GitHub Repository Submission}
+All source artifacts, environment setup documentation, test cases, and repository scripts have been pushed to GitHub.
+
+\subsection{Repository Layout}
+The repository structure is arranged as follows:
+\begin{verbatim}
+crypto_exam/
+├── README.md
+├── risk_assessment.md
+├── filter_tests.md
+├── app/
+│   ├── security_toolkit.py
+│   └── requirements.txt
+├── firewall/
+│   └── rules.sh
+└── docs/
+    ├── report.tex
+    └── report.pdf
+\end{verbatim}
+
+\section{Conclusion}
+This project addressed the key vulnerabilities identified in the initial security review. By deploying Fernet AES-256 binary encryption and SHA-256 checksum monitoring, data in transit and at rest remains secure against eavesdropping and tampering. Restricting network boundaries via \texttt{iptables} prevents unauthorized guest access and external probing.
+
+The complete codebase, configurations, and documentation can be cloned from: \\
+\url{https://github.com/Peace-btech/crypto_exam}
+
+\end{document}\documentclass[12pt,a4paper]{article}
+\usepackage[utf8]{inputenc}
+\usepackage[margin=1in]{geometry}
+\usepackage{hyperref}
+\usepackage{listings}
+\usepackage{xcolor}
+\usepackage{booktabs}
+\usepackage{array}
+
+% Code snippet styling
+\definecolor{codegray}{rgb}{0.95,0.95,0.95}
+\definecolor{codegreen}{rgb}{0,0.6,0}
+\definecolor{codeblue}{rgb}{0,0.2,0.8}
+
+\lstdefinestyle{mystyle}{
+    backgroundcolor=\color{codegray},   
+    commentstyle=\color{codegreen},
+    keywordstyle=\color{codeblue},
+    basicstyle=\ttfamily\small,
+    breaklines=true,
+    captionpos=b,
+    keepspaces=true,
+    numbers=left,
+    numbersep=5pt,
+    showspaces=false,
+    showstringspaces=false,
+    showtabs=false,
+    tabsize=2
+}
+\lstset{style=mystyle}
+
+\title{\textbf{TECHNICAL REPORT: INTEGRATED SECURITY ASSESSMENT, PYTHON TOOLKIT, AND FIREWALL CONFIGURATION}\\
+\large Module: ETTCS801 Cryptography and Network Security}
+\author{\textbf{Peace MUNYANEZA}\\ULK Polytechnic Institute}
+\date{\today}
+
+\begin{document}
+
+\maketitle
+
+\begin{abstract}
+This technical report documents the implementation of security measures for a polytechnic institute's central server and campus network. It covers a comprehensive risk assessment, a custom Python cryptography and file integrity toolkit, iptables network traffic filtering, verification test cases, and repository deployment instructions.
+\end{abstract}
+
+\tableofcontents
+\newpage
+
+\section{Introduction}
+A recent security review identified multiple vulnerabilities across the institution's network, including unencrypted student record file transfers, weak staff passwords, outdated software, and unencrypted guest network access to the primary records server. Additionally, repetitive unauthorized external access attempts were observed. This project implements risk mitigation controls, an automated file encryption and integrity checking toolkit in Python, and explicit network access control lists using Linux firewall utilities.
+
+\section{Risk Assessment}
+
+\subsection{Assets, Vulnerabilities, and Consequences}
+\begin{description}
+    \item[Asset 1: Student Records Database/Server] \hfill \\
+    \textit{Vulnerabilities:} Unencrypted file transfers over the local network and guest network routing directly to the server. \\
+    \textit{Consequences:} Interception of sensitive personally identifiable information (PII) via packet sniffing, potential exposure of grade records, and breach of compliance regulations.
+    
+    \item[Asset 2: Staff User Credentials and Authentication Session] \hfill \\
+    \textit{Vulnerabilities:} Weak password policy and outdated software/services. \\
+    \textit{Consequences:} Credential stuffing, brute-force attacks, system compromise, and unauthorized administrative privilege escalation.
+    
+    \item[Asset 3: Internal Network Infrastructure] \hfill \\
+    \textit{Vulnerabilities:} Unrestricted routing between the guest segment and administrative servers, along with unmonitored inbound external traffic. \\
+    \textit{Consequences:} Denial of Service (DoS) attacks, unauthorized network pivoting, and external exploit execution.
+\end{description}
+
+\subsection{Risk Rankings and Justification}
+\begin{table}[h!]
+\centering
+\begin{tabular}{l l l p{6cm}}
+\toprule
+\textbf{Risk} & \textbf{Likelihood} & \textbf{Impact} & \textbf{Justification} \\
+\midrule
+1. Interception of Unencrypted Data & High & High & Active network exposure via unencrypted file transfers and open guest routing makes data capture trivially reproducible. \\
+2. Unauthorized Access via Weak Passwords & High & Medium & Passive brute-force attempts from external IPs combined with weak credential rules present a high probability of compromise. \\
+3. External Unsolicited Server Traffic & Medium & High & Exposure to malicious external addresses can lead to system vulnerabilities being exploited. \\
+\bottomrule
+\end{tabular}
+\caption{Risk Assessment Matrix}
+\end{table}
+
+\subsection{Recommended Controls}
+\begin{itemize}
+    \item \textbf{Control 1 (Encryption \& Integrity Verification):} Deploy AES-256 Symmetric Encryption (CBC mode with PKCS7 padding) for storing and transferring files, combined with SHA-256 cryptographic hashing to ensure data integrity.
+    \item \textbf{Control 2 (Network Segmentation \& Filtering):} Implement strict stateful firewall rules (\texttt{iptables}) separating guest traffic from internal administrative zones, blocking all unauthorized subnet requests.
+    \item \textbf{Control 3 (Access Control \& Key Management):} Enforce strong password complexity policies, update host software packages, and store system decryption keys outside root code repositories using environment-level key isolation.
+\end{itemize}
+
+\section{Encryption and Integrity Application}
+
+\subsection{Implementation Overview}
+A custom Python script using the \texttt{cryptography} library (\texttt{Fernet}/AES-CBC) and \texttt{hashlib} was written to manage security functions. The application reads local file binaries, generates cryptographic signatures using SHA-256, encrypts payloads, and handles file exceptions safely.
+
+\subsection{Core Cryptographic Implementation}
+\begin{lstlisting}[language=Python, caption=Python Security Application Excerpt]
+import os
+import hashlib
+from cryptography.fernet import Fernet
+
+def generate_and_save_key(key_path="secret.key"):
+    key = Fernet.generate_key()
+    with open(key_path, "wb") as key_file:
+        key_file.write(key)
+
+def load_key(key_path="secret.key"):
+    if not os.path.exists(key_path):
+        raise FileNotFoundError("Encryption key missing!")
+    return open(key_path, "rb").read()
+
+def encrypt_file(file_path, key):
+    f = Fernet(key)
+    with open(file_path, "rb") as file:
+        file_data = file.read()
+    encrypted_data = f.encrypt(file_data)
+    with open(file_path + ".enc", "wb") as file:
+        file.write(encrypted_data)
+
+def decrypt_file(enc_path, key):
+    f = Fernet(key)
+    with open(enc_path, "rb") as file:
+        encrypted_data = file.read()
+    decrypted_data = f.decrypt(encrypted_data)
+    out_path = enc_path.replace(".enc", ".dec")
+    with open(out_path, "wb") as file:
+        file.write(decrypted_data)
+
+def calculate_sha256(file_path):
+    sha256_hash = hashlib.sha256()
+    try:
+        with open(file_path, "rb") as f:
+            for byte_block in iter(lambda: f.read(4096), b""):
+                sha256_hash.update(byte_block)
+        return sha256_hash.hexdigest()
+    except FileNotFoundError:
+        print(f"Error: File '{file_path}' not found.")
+        return None
+\end{lstlisting}
+
+\subsection{Verification Procedures}
+\begin{enumerate}
+    \item \textbf{Encryption Testing:} The plain text student records file (\texttt{student\_records.txt}) was encrypted into \texttt{student\_records.txt.enc}. Verification confirmed that the original cleartext was obfuscated.
+    \item \textbf{Decryption Testing:} Decryption resulted in \texttt{student\_records.txt.dec}. A \texttt{diff} check confirmed that the decrypted payload was identical to the input file.
+    \item \textbf{Integrity Verification:} SHA-256 hashes generated before and after file modification demonstrated clear signature drift, correctly alerting the application to payload tampering.
+    \item \textbf{Error Handling:} Validated that attempting to open non-existent paths or passing corrupted decryption keys yielded controlled error warnings rather than crash dumps.
+\end{enumerate}
+
+\section{Network Traffic Filtering}
+
+\subsection{Firewall Rule Definitions}
+Traffic filtering was implemented using \texttt{iptables} rules configured on the central Linux record server.
+
+\begin{lstlisting}[language=bash, caption=iptables Network Rule Configuration]
+# Flush pre-existing chain rules
+sudo iptables -F
+sudo iptables -X
+
+# Set default policy to drop inbound traffic
+sudo iptables -P INPUT DROP
+sudo iptables -P FORWARD DROP
+sudo iptables -P OUTPUT ACCEPT
+
+# Allow loopback operations
+sudo iptables -A INPUT -i lo -j ACCEPT
+sudo iptables -A INPUT -m state --state ESTABLISHED,RELATED -j ACCEPT
+
+# Block Guest Subnet Access (192.168.100.0/24) to Records Server
+sudo iptables -A INPUT -s 192.168.100.0/24 -d 10.0.0.5 -j DROP
+
+# Permit Authorized Staff Subnet (10.0.10.0/24) Access to HTTP/HTTPS Service
+sudo iptables -A INPUT -p tcp -s 10.0.10.0/24 --dport 443 -j ACCEPT
+sudo iptables -A INPUT -p tcp -s 10.0.10.0/24 --dport 80 -j ACCEPT
+
+# Drop all other unauthorized inbound traffic on destination port 443/80
+sudo iptables -A INPUT -p tcp --dport 443 -j DROP
+sudo iptables -A INPUT -p tcp --dport 80 -j DROP
+\end{lstlisting}
+
+\subsection{Filter Verification Test Execution}
+Verification scenarios were evaluated using netcat (\texttt{nc}) connectivity probes.
+
+\begin{table}[h!]
+\centering
+\begin{tabular}{p{3.5cm} p{4.5cm} p{3.5cm} p{3.5cm}}
+\toprule
+\textbf{Test Connection} & \textbf{Command Executed} & \textbf{Expected Outcome} & \textbf{Actual Result} \\
+\midrule
+1. Staff Subnet Access (Permitted) & \texttt{nc -zv -w 3 10.0.0.5 443} (from 10.0.10.15) & Connection Succeeded & Connected to 10.0.0.5 port 443 [tcp/https] open \\
+2. Guest Subnet Access (Blocked) & \texttt{nc -zv -w 3 10.0.0.5 443} (from 192.168.100.22) & Connection Timed Out / Dropped & nc: connect to 10.0.0.5 port 443 (tcp) timed out \\
+3. Unfamiliar External Host (Blocked) & \texttt{nc -zv -w 3 10.0.0.5 443} (from 203.0.113.50) & Connection Timed Out / Dropped & nc: connect to 10.0.0.5 port 443 (tcp) timed out \\
+\bottomrule
+\end{tabular}
+\caption{Firewall Filter Verification Results}
+\end{table}
+
+\section{Project Evidence and GitHub Repository Submission}
+All source artifacts, environment setup documentation, test cases, and repository scripts have been pushed to GitHub.
+
+\subsection{Repository Layout}
+The repository structure is arranged as follows:
+\begin{verbatim}
+crypto_exam/
+├── README.md
+├── risk_assessment.md
+├── filter_tests.md
+├── app/
+│   ├── security_toolkit.py
+│   └── requirements.txt
+├── firewall/
+│   └── rules.sh
+└── docs/
+    ├── report.tex
+    └── report.pdf
+\end{verbatim}
+
+\section{Conclusion}
+This project addressed the key vulnerabilities identified in the initial security review. By deploying Fernet AES-256 binary encryption and SHA-256 checksum monitoring, data in transit and at rest remains secure against eavesdropping and tampering. Restricting network boundaries via \texttt{iptables} prevents unauthorized guest access and external probing.
+
+The complete codebase, configurations, and documentation can be cloned from: \\
+\url{https://github.com/Peace-btech/crypto_exam}
+
+\end{document}
